@@ -3255,7 +3255,7 @@ html.zune-browsing #main-view main {
   }
   #zune-browser .zb-songs.is-wide .zb-row,
   #zune-browser .zb-colhead {
-    grid-template-columns: 30px minmax(0, 2fr) minmax(0, 1.2fr) 46px;
+    grid-template-columns: 24px minmax(0, 2fr) minmax(0, 1.2fr) 46px;
   }
   #zune-browser .zb-songs.is-wide .zb-row > :nth-child(4),
   #zune-browser .zb-colhead > :nth-child(4) {
@@ -3397,6 +3397,109 @@ html.zune-motion-reduced #zune-browser .zb-body.zune-enter .zb-col {
   color: var(--spice-subtext);
   font-variant-numeric: tabular-nums;
 }
+/* Collection shortcuts mirror the accessible action buttons after each list. */
+#zune-browser .zb-play-slot {
+  flex: none;
+  width: 24px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  text-align: center;
+}
+#zune-browser .zb-play-circle {
+  display: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+}
+#zune-browser .zb-play-circle svg { width: 12px; height: 12px; fill: currentColor; }
+#zune-browser .zb-playing-bars { display: none; height: 13px; gap: 1px; align-items: end; }
+#zune-browser .zb-playing-bars i { display: block; width: 2px; height: 7px; background: currentColor; }
+#zune-browser .zb-playing-bars i:nth-child(2) { height: 12px; }
+#zune-browser .zb-playing-bars i:nth-child(3) { height: 9px; }
+#zune-browser .zb-playing-bars i:nth-child(4) { height: 4px; }
+#zune-browser .is-playing > .zb-play-slot .zb-track-number { display: none; }
+#zune-browser .is-playing > .zb-play-slot .zb-playing-bars { display: flex; }
+#zune-browser .zb-song:hover > .zb-play-slot .zb-play-circle,
+#zune-browser .zb-song.is-active > .zb-play-slot .zb-play-circle,
+#zune-browser .zb-album:hover > .zb-play-slot .zb-play-circle,
+#zune-browser .zb-album.is-selected > .zb-play-slot .zb-play-circle,
+#zune-browser .zb-scroll:focus-visible .is-active > .zb-play-slot .zb-play-circle { display: flex; }
+#zune-browser .zb-song:hover > .zb-play-slot > :not(.zb-play-circle),
+#zune-browser .zb-song.is-active > .zb-play-slot > :not(.zb-play-circle),
+#zune-browser .zb-album:hover > .zb-play-slot > :not(.zb-play-circle),
+#zune-browser .zb-album.is-selected > .zb-play-slot > :not(.zb-play-circle),
+#zune-browser .zb-scroll:focus-visible .is-active > .zb-play-slot > :not(.zb-play-circle) { display: none; }
+#zune-browser .zb-song { position: relative; isolation: isolate; }
+#zune-browser .zb-song > * { position: relative; z-index: 1; }
+#zune-browser .zb-song.is-playing {
+  background-color: var(--zb-playing-bg, var(--spice-main));
+  color: var(--zb-playing-title, var(--spice-text));
+}
+#zune-browser .zb-song.is-playing:hover { background-color: color-mix(in srgb, var(--zb-playing-ink) 3%, var(--zb-playing-bg)); }
+#zune-browser .zb-song.is-playing.is-active { background-color: color-mix(in srgb, var(--zb-playing-ink) 7%, var(--zb-playing-bg)); }
+#zune-browser .zb-song.is-playing::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg in srgb, var(--zune-line-a), var(--zune-line-b));
+  opacity: var(--zb-playing-wash, 0);
+}
+#zune-browser .zb-song.is-playing .zb-dim,
+#zune-browser .zb-song.is-playing .zb-time,
+#zune-browser .zb-song.is-playing .zb-num { color: var(--zb-playing-ink, var(--spice-text)); }
+#zune-browser .zb-song.is-playing .zb-go { color: inherit; }
+#zune-browser .zb-scroll:focus-visible .zb-song.is-active { outline: 2px solid var(--zb-playing-ink, var(--spice-text)); outline-offset: -2px; }
+#zune-browser .zb-album { position: relative; }
+#zune-browser .zb-album > .zb-play-slot {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 32px;
+  height: 32px;
+  visibility: hidden;
+  color: var(--zb-playing-ink, var(--spice-text));
+  background: var(--zb-playing-bg, var(--spice-main));
+  border-radius: 50%;
+}
+#zune-browser .zb-album .zb-play-circle { width: 28px; height: 28px; }
+#zune-browser .zb-album.is-playing > .zb-play-slot,
+#zune-browser .zb-album:hover > .zb-play-slot,
+#zune-browser .zb-album.is-selected > .zb-play-slot,
+#zune-browser .zb-scroll:focus-visible .zb-album.is-active > .zb-play-slot { visibility: visible; }
+#zune-browser .zb-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--zune-line);
+  font-size: 11px;
+}
+#zune-browser .zb-action,
+#zune-browser .zb-reveal {
+  all: unset;
+  cursor: pointer;
+  color: var(--spice-text);
+}
+#zune-browser .zb-action { min-width: 0; max-width: 65%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#zune-browser .zb-action[aria-disabled="true"] { cursor: default; color: var(--spice-subtext); }
+#zune-browser .zb-action:focus-visible,
+#zune-browser .zb-reveal:focus-visible,
+#zune-browser .zb-reveal-note button:focus-visible { outline: 2px solid var(--spice-text); outline-offset: 3px; }
+#zune-browser .zb-action-reason { color: var(--spice-subtext); min-width: 0; }
+#zune-browser .zb-reveal { font-size: 11px; flex: none; }
+#zune-browser .zb-reveal-note { padding: 0 22px 10px; font-size: 12px; }
+#zune-browser .zb-reveal-note button { margin-left: 8px; text-decoration: underline; }
+
 #zune-browser .zb-spacer {
   position: relative;
 }
@@ -3410,7 +3513,7 @@ html.zune-motion-reduced #zune-browser .zb-body.zune-enter .zb-col {
 #zune-browser .zb-songs.is-wide .zb-row,
 #zune-browser .zb-colhead {
   display: grid;
-  grid-template-columns: 34px minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 52px;
+  grid-template-columns: 24px minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 52px;
 }
 #zune-browser .zb-colhead {
   column-gap: 10px;
@@ -4746,6 +4849,11 @@ html.zune-icons #global-nav-bar form button svg {
   -webkit-mask: var(--zi-search) center / contain no-repeat;
   mask: var(--zi-search) center / contain no-repeat;
   background-color: currentColor;
+}
+html.zune-icons #global-nav-bar form button[aria-label*="Clear"] svg {
+  --zi-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 4 8 8M12 4l-8 8' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  -webkit-mask: var(--zi-close) center / contain no-repeat;
+  mask: var(--zi-close) center / contain no-repeat;
 }
 html.zune-icons #Desktop_LeftSidebar_Id button[aria-label="Create"] svg {
   -webkit-mask: var(--zi-plus) center / contain no-repeat;

@@ -12,7 +12,14 @@
   "use strict";
 
   const S = window.Spicetify;
+  let playerReady = false;
+  try {
+    playerReady = typeof S?.Player?.isPlaying?.() === "boolean";
+  } catch (_) {
+    // The wrapper exposes its methods before the player's internal state.
+  }
   if (
+    !playerReady ||
     !S?.Platform?.History ||
     !S?.Player?.addEventListener ||
     !S?.LocalStorage ||
@@ -75,6 +82,13 @@
     if (cell._links === key) return;
     cell._links = key;
     cell.replaceChildren(...nameLinks(list, focusable));
+  }
+
+  function replaceKeepingFocus(old, fresh) {
+    const active = old?.contains(document.activeElement) ? document.activeElement : null;
+    const name = active && (active.getAttribute("aria-label") || active.textContent);
+    old.replaceWith(fresh);
+    if (name) [...fresh.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") || b.textContent) === name)?.focus({ preventScroll: true });
   }
 
   const ICON = {
@@ -317,6 +331,7 @@
     choice("browserView", "collection", "artists", [["artists", "artists"], ["albums", "albums"], ["songs", "songs"], ["playlists", "playlists"]], "Opens on"),
     toggle("browserFullWidth", "collection", true, "Full width", { help: "Cover the library sidebar and Spotify's right panel, as Zune's collection filled the window." }),
     choice("browserRowHeight", "collection", "28", [["24", "compact"], ["28", "normal"], ["34", "roomy"]], "Row height", { css: "--zune-browser-row", cssUnit: "px" }),
+    choice("playingHighlight", "collection", "gradient", [["mark", "Zune mark"], ["gradient", "soft gradient"]], "Playing highlight", { help: "Small Zune bars, with an optional static wash using Accent lines and Gradient end. Focus and selection stay separate." }),
     range("albumTileSize", "collection", 104, 72, 160, 4, "Album size", { css: "--zune-album-tile", cssUnit: "px", unit: "px" }),
 
     // pivots
@@ -609,6 +624,7 @@
       setClass("zune-palette-dark", next === "dark" && BASE_SCHEME !== "dark");
       applyColors();
       updateQuickplay(currentPath(), true);
+      browser.onColors();
     };
     if (animate && next !== schemeKey) swapPalette(change);
     else change();
@@ -719,10 +735,11 @@
   const hasApp = (name) => (S.Config?.custom_apps || []).includes(name);
 
   function clickFriendsPanel() {
-    const btn = [...document.querySelectorAll("#global-nav-bar button[aria-label]")].find((b) =>
+    const btn = document.querySelector('#global-nav-bar [data-testid="friend-activity-button"]') || [...document.querySelectorAll("#global-nav-bar button[aria-label]")].find((b) =>
       /friend|listening activity|buddy/i.test(b.getAttribute("aria-label"))
     );
-    btn?.click();
+    if (btn) btn.click();
+    else notify("Spotify's listening activity control is unavailable in this client.", true);
   }
 
   function focusSearch() {
@@ -1054,7 +1071,13 @@
   );
 
   function updatePlaying() {
-    root.classList.toggle("zune-playing", !!S.Player.isPlaying?.());
+    let playing = false;
+    try {
+      playing = !!S.Player.isPlaying?.();
+    } catch (_) {
+      // A temporary player disconnect must not abort theme initialization.
+    }
+    root.classList.toggle("zune-playing", playing);
   }
 
   /* ------------------------------------------------------------------ */
@@ -2314,9 +2337,11 @@
     // the filter narrows every list in the view to names, artists, albums
     // or owners containing all the words typed
     const filter = h("input", { type: "search", class: "zb-filter", placeholder: "filter", "aria-label": "Filter the collection", spellcheck: "false", autocomplete: "off" });
-    const bar = h("div", { class: "zb-bar" }, filter, switcher);
+    const revealNote = h("div", { class: "zb-reveal-note", role: "status", hidden: true });
+    const revealButton = h("button", { type: "button", class: "zb-reveal", text: "Show playing song", onclick: revealPlaying });
+    const bar = h("div", { class: "zb-bar" }, filter, revealButton, switcher);
     const body = h("div", { class: "zb-body" });
-    el.append(bar, body);
+    el.append(bar, revealNote, body);
     document.body.append(el);
 
     const data = {
@@ -2342,6 +2367,232 @@
     let songList = null;
     let songSource = { items: [], context: null };
     let renderToken = 0;
+    const footers = new Map();
+    let pendingPlayback = null;
+    const snapshot = (raw = S.Player.data) => ({
+      track: raw?.item?.uri || "",
+      context: raw?.context?.uri || raw?.context_uri || "",
+      paused: typeof raw?.isPaused === "boolean" ? raw.isPaused : null,
+    });
+    let playback = snapshot();
+
+    function playbackAction(kind, item, context) {
+      const current = !!item?.uri && (kind === "song" ? item.uri === playback.track : item.uri === playback.context);
+      const action = current ? playback.paused ? "Resume" : "Pause" : "Play";
+      const reason = !item ? "Choose an item first." : pendingPlayback ? "Waiting for Spotify…" : !playback.track || playback.paused === null ? "Spotify's player is not ready." : item.isPlayable === false || item.is_playable === false ? "This item is unavailable." : "";
+      return { kind, item, context, current, action, reason };
+    }
+
+    function finishPlayback(request, message, error = false) {
+      if (pendingPlayback !== request) return;
+      clearTimeout(request.timer);
+      pendingPlayback = null;
+      syncActions();
+      if (message) notify(message, error);
+    }
+
+    function refreshPlayback(raw) {
+      const next = snapshot(raw);
+      const changed = next.track !== playback.track || next.context !== playback.context || next.paused !== playback.paused;
+      playback = next;
+      if (pendingPlayback?.matches(next)) finishPlayback(pendingPlayback);
+      if (shown && changed) {
+        songList?.paint();
+        for (const tile of body.querySelectorAll(".zb-album")) paintAlbumPlayback(tile);
+      }
+      syncActions();
+      if (changed) menu.onPlaybackChange();
+    }
+
+    function activatePlayback(kind, item, context) {
+      refreshPlayback();
+      const a = playbackAction(kind, item, context);
+      if (a.reason) return notify(a.reason, true);
+      const desired = !playback.paused;
+      const request = {
+        matches: a.current
+          ? (p) => (kind === "song" ? p.track === item.uri : p.context === item.uri) && p.paused === desired
+          : (p) => p.paused === false && (kind === "song" ? p.track === item.uri : p.context === item.uri),
+      };
+      pendingPlayback = request;
+      request.timer = setTimeout(() => {
+        refreshPlayback();
+        if (pendingPlayback === request) finishPlayback(request, "Spotify's playback result could not be confirmed.", true);
+      }, 3000);
+      syncActions();
+      try {
+        const result = a.current
+          ? playback.paused ? S.Player.play() : S.Player.pause()
+          : S.Player.playUri(kind === "song" ? context || item.uri : item.uri, {}, kind === "song" && context ? { skipTo: { uri: item.uri } } : {});
+        if (result?.then) result.then(() => refreshPlayback(), () => finishPlayback(request, "Spotify could not play that item.", true));
+      } catch (_) {
+        finishPlayback(request, "Spotify could not change playback.", true);
+      }
+    }
+
+    const bars = () => h("span", { class: "zb-playing-bars", "aria-hidden": "true" }, h("i"), h("i"), h("i"), h("i"));
+    function playbackGlyph() {
+      return h("span", { class: "zb-play-slot", "aria-hidden": "true", "data-play-action": "" },
+        h("span", { class: "zb-track-number" }), bars(), h("span", { class: "zb-play-circle" }));
+    }
+    function paintGlyph(slot, kind, item, context, number = "") {
+      const a = playbackAction(kind, item, context);
+      slot.title = `${a.action} ${item?.name || ""}`;
+      slot.querySelector(".zb-track-number").textContent = number;
+      const circle = slot.querySelector(".zb-play-circle");
+      const icon = a.current && playback.paused === false ? "pause" : "play";
+      if (circle.dataset.icon !== icon) { circle.innerHTML = ICON[icon]; circle.dataset.icon = icon; }
+    }
+    function paintAlbumPlayback(tile) {
+      const current = !!tile.dataset.uri && tile.dataset.uri === playback.context;
+      tile.classList.toggle("is-playing", current);
+      tile.classList.toggle("is-paused", current && playback.paused === true);
+      const box = tile.closest(".zb-scroll");
+      const item = box?._items[Number(tile.dataset.i)];
+      if (item) {
+        tile.setAttribute("aria-label", `${title(item)}${current ? playback.paused ? ", Paused" : ", Playing" : ""}`);
+        paintGlyph(tile.querySelector(".zb-play-slot"), "album", item);
+      }
+    }
+
+    function actionFooter(box, kind) {
+      let f = footers.get(kind);
+      if (!f) {
+        const button = h("button", { type: "button", class: "zb-action", id: `zb-${kind}-action`, "aria-describedby": `zb-${kind}-reason`, onclick: (e) => {
+          if (e.detail > 1 || button.getAttribute("aria-disabled") === "true") return;
+          const item = f.box?._items[f.box._active];
+          activatePlayback(kind, item, kind === "song" ? songSource.context : null);
+        } });
+        const reason = h("span", { class: "zb-action-reason", id: `zb-${kind}-reason` });
+        button.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          // Keep Spotify's page-level transport shortcut out of this action.
+          e.preventDefault();
+          e.stopPropagation();
+          if (!e.repeat) button.click();
+        });
+        const node = h("div", { class: "zb-actions", "data-kind": kind }, button, reason);
+        f = { node, button, reason, box: null, restore: null };
+        footers.set(kind, f);
+      }
+      f.box = box;
+      box._footer = f;
+      return f.node;
+    }
+    function rememberActionFocus(replacedKind) {
+      const kind = document.activeElement?.closest?.("#zune-browser .zb-actions")?.dataset.kind;
+      if (replacedKind && kind !== replacedKind) return null;
+      const f = footers.get(kind);
+      const item = f?.box?._items[f.box._active];
+      if (item) f.restore = { uri: item.uri, context: kind === "song" ? songSource.context : null };
+      // Constructors restore list positions before binding replacement footers.
+      if (f) f.box = null;
+      return f;
+    }
+    function syncActions() {
+      for (const [kind, f] of footers) {
+        if (!f.box) continue;
+        if (f.restore) {
+          const context = kind === "song" ? songSource.context : null;
+          const i = context === f.restore.context ? f.box._items.findIndex((x) => x.uri === f.restore.uri) : -1;
+          if (i >= 0) {
+            f.restore = null;
+            setActive(f.box, i, false);
+          }
+        }
+        const a = playbackAction(kind, f.restore ? null : f.box._items[f.box._active], kind === "song" ? songSource.context : null);
+        setText(f.button, a.item ? `${a.action} ${title(a.item)}` : kind === "song" ? "Play selected song" : "Play selected album");
+        setAttr(f.button, "aria-label", f.button.textContent);
+        setAttr(f.button, "title", f.button.textContent);
+        setAttr(f.button, "aria-disabled", String(!!a.reason));
+        setText(f.reason, a.reason);
+      }
+    }
+    function inlinePlayback(e, box, kind) {
+      if (!e.target.closest?.("[data-play-action]")) return false;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.type === "click" && e.detail < 2) {
+        const row = e.target.closest("[data-i]");
+        const item = box._items[Number(row?.dataset.i)];
+        activatePlayback(kind, item, kind === "song" ? songSource.context : null);
+      }
+      return true;
+    }
+
+    function refreshPlayingColors() {
+      const css = getComputedStyle(root);
+      const rgb = (name, fallback) => hexToRgb(css.getPropertyValue(name).trim())?.split(",").map(Number) || fallback;
+      const mix = (a, b, amount) => a.map((v, i) => v * (1 - amount) + b[i] * amount);
+      const lum = (c) => c.map((v) => { const n = v / 255; return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const a = rgb("--zune-line-a", [236, 0, 140]);
+      const b = settings.accentLines === "solid" ? a : rgb("--zune-line-b", [247, 148, 29]);
+      let base = rgb("--spice-main", [255, 255, 255]);
+      let alpha = settings.playingHighlight === "gradient" && !settings.highContrast ? 0.04 : 0;
+      // Per-channel bounds include every gradient color and every selection shade.
+      function worst(fg, ink) {
+        const samples = [0, 0.03, 0.07].flatMap((shade) => [a, b].map((end) => mix(mix(base, ink, shade), end, alpha)));
+        const lo = lum([0, 1, 2].map((i) => Math.min(...samples.map((c) => c[i]))));
+        const hi = lum([0, 1, 2].map((i) => Math.max(...samples.map((c) => c[i]))));
+        const f = lum(fg);
+        if (f >= lo && f <= hi) return 1;
+        return Math.min((Math.max(f, lo) + 0.05) / (Math.min(f, lo) + 0.05), (Math.max(f, hi) + 0.05) / (Math.min(f, hi) + 0.05));
+      }
+      const black = [0, 0, 0], white = [255, 255, 255];
+      let ink = worst(black, black) >= worst(white, white) ? black : white;
+      if (worst(ink, ink) < 4.5) alpha = 0;
+      if (worst(ink, ink) < 4.5) { base = lum(base) > 0.18 ? white : [18, 18, 18]; ink = lum(base) > 0.18 ? black : white; }
+      let accent = a;
+      for (let i = 0; i <= 10; i++) {
+        accent = mix(a, ink, i / 10).map(Math.round);
+        if (worst(accent, ink) >= 4.5) break;
+      }
+      const color = (c) => `rgb(${c.map(Math.round).join(", ")})`;
+      el.style.setProperty("--zb-playing-bg", color(base));
+      el.style.setProperty("--zb-playing-ink", color(ink));
+      el.style.setProperty("--zb-playing-title", color(accent));
+      el.style.setProperty("--zb-playing-wash", String(alpha));
+    }
+
+    function revealPlaying() {
+      refreshPlayback();
+      const uri = playback.track;
+      const box = songList?.box;
+      const matches = (box?._items || []).map((t, i) => t.uri === uri ? i : -1).filter((i) => i >= 0);
+      revealNote.hidden = true;
+      revealNote.replaceChildren();
+      if (matches.length) {
+        const top = box._top || 0;
+        const index = matches.find((i) => i * rowHeight() >= top && i * rowHeight() < top + box.clientHeight) ?? matches[0];
+        box._virtual.reveal(index);
+        return;
+      }
+      const say = (text, label, action) => {
+        revealNote.hidden = false;
+        revealNote.append(text, action ? h("button", { type: "button", class: "zb-link", text: label, onclick: action }) : "");
+      };
+      if (!uri) return say("No song is playing.");
+      if (songSource.error || (songSource.context === likedContext() && data.likedError)) return say("Couldn't load this song list. ", "Try again", () => (data.likedError ? loadLiked(true) : refreshSongs()).then(revealPlaying));
+      if (!songSource.context || (songSource.context === likedContext() && !data.likedDone)) return say("This song list is still loading. ", "Try again", revealPlaying);
+      const all = state.view === "playlists" ? data.playlistTracks.get(state.playlist?.uri) : state.album && state.view !== "songs" ? data.albumTracks.get(state.album.uri) : state.artist && state.view === "artists" ? data.liked.filter((t) => t.artists?.some((a) => a.uri === state.artist.uri)) : data.liked;
+      if (filterText && all?.some((t) => t.uri === uri)) return say("The current filter hides the playing song. ", "Clear filter and reveal", async () => {
+        const selected = box?._items[box._active]?.uri;
+        filter.value = filterText = "";
+        await refreshSongs();
+        const i = songList?.box._items.findIndex((t) => t.uri === selected);
+        if (i >= 0) setActive(songList.box, i, false);
+        revealPlaying();
+      });
+      const [, type, id] = uri.split(":");
+      say("The playing song is outside this collection view. ", ["track", "episode"].includes(type) ? "Open playing track" : "", ["track", "episode"].includes(type) ? () => History.push(`/${type}/${id}`) : null);
+    }
+
+    const playerEvents = S.Player.origin?._events;
+    if (typeof playerEvents?.addListener === "function" && typeof playerEvents?.removeListener === "function") {
+      const update = ({ data }) => refreshPlayback(data);
+      playerEvents.addListener("update", update);
+      window.addEventListener("pagehide", () => playerEvents.removeListener("update", update), { once: true });
+    }
 
     // Sort orders, kept between visits under their own key; the filter is
     // for this visit only.
@@ -2781,11 +3032,13 @@
     }
 
     function setActive(box, i, scroll) {
+      if (box._footer) box._footer.restore = null;
       box._active = i;
       state.active[box.id] = i;
       if (box._virtual) {
         if (scroll) box._virtual.reveal(i);
         else box._virtual.paint();
+        syncActions();
         return;
       }
       box._ensure?.(i);
@@ -2796,6 +3049,7 @@
         node.classList.add("is-active");
         if (scroll) node.scrollIntoView({ block: "nearest" });
       }
+      syncActions();
     }
 
     function head(parts, links = [], extra = null) {
@@ -3003,6 +3257,7 @@
           "div",
           { class: "zb-album", role: "option", id: `zb-albums-o${i}`, "data-i": String(i), title: `${title(al)} · ${names}`, "data-uri": al.uri, "data-name": title(al), "data-artist": al.artists?.[0]?.uri || "" },
           h("img", { src: imageUrl(al.images?.[0]?.url) || "", alt: "", loading: "lazy", decoding: "async" }),
+          playbackGlyph(),
           h("span", { class: "zb-t" }, nameLinks([{ uri: al.uri, name: title(al), artist: al.artists?.[0]?.uri }], false)),
           h("span", { class: "zb-a" }, nameLinks(al.artists, false))
         );
@@ -3011,6 +3266,11 @@
           tile.setAttribute("aria-selected", "true");
         }
         if (i === box._active) tile.classList.add("is-active");
+        const current = al.uri === playback.context;
+        tile.classList.toggle("is-playing", current);
+        tile.classList.toggle("is-paused", current && playback.paused === true);
+        tile.setAttribute("aria-label", `${title(al)}${current ? playback.paused ? ", Paused" : ", Playing" : ""}`);
+        paintGlyph(tile.querySelector(".zb-play-slot"), "album", al);
         return tile;
       };
       let built = 0;
@@ -3039,6 +3299,7 @@
         const tile = e.target.closest?.(".zb-album");
         return tile && box.contains(tile) ? Number(tile.dataset.i) : -1;
       };
+      for (const type of ["click", "dblclick"]) box.addEventListener(type, (e) => inlinePlayback(e, box, "album"), true);
       box.addEventListener("click", (e) => {
         const i = indexOf(e);
         if (i < 0) return;
@@ -3059,6 +3320,7 @@
       const links = [];
       if (state.artist && state.view === "artists") links.push(["all artists", () => selectArtist(null)], ["open artist ›", () => History.push(`/artist/${state.artist.uri.split(":")[2]}`)]);
       const sort = sortChoice("albums", (v) => {
+        const focusedFooter = rememberActionFocus("album");
         prefs.albums = v;
         savePrefs();
         state.active["zb-albums"] = -1;
@@ -3066,9 +3328,10 @@
         if (!col) return render(false);
         const fresh = albumColumn();
         col.replaceWith(fresh);
-        fresh.querySelector(".zb-sort")?.focus({ preventScroll: true });
+        if (focusedFooter?.node.isConnected) { syncActions(); focusedFooter.button.focus({ preventScroll: true }); }
+        else fresh.querySelector(".zb-sort")?.focus({ preventScroll: true });
       });
-      return column("zb-albums", head([[counted(list.length, base.length, "albums"), true]], links, sort), box);
+      return column("zb-albums", head([[counted(list.length, base.length, "albums"), true]], links, sort), box, actionFooter(box, "album"));
     }
 
     function playlistColumn() {
@@ -3119,17 +3382,18 @@
           const mode = wide ? "wide" : state.view === "artists" ? "title" : songSource.showArtist ? "artist" : "plain";
           if (row._mode !== mode) {
             const c = (row._c = {
-              num: h("span", { class: "zb-num" }),
+              num: playbackGlyph(),
               title: h("span", { class: "zb-title" }),
               a: h("span", { class: wide ? "zb-dim" : "zb-dim zb-narrow" }),
               b: h("span", { class: "zb-dim" }),
               time: h("span", { class: "zb-time" }),
             });
-            row.replaceChildren(...(mode === "wide" ? [c.num, c.title, c.a, c.b, c.time] : mode === "artist" ? [c.num, c.title, c.a, c.time] : mode === "title" ? [c.title] : [c.num, c.title, c.time]));
+            c.num.classList.add("zb-num");
+            row.replaceChildren(...(mode === "wide" ? [c.num, c.title, c.a, c.b, c.time] : mode === "artist" ? [c.num, c.title, c.a, c.time] : mode === "title" ? [c.num, c.title] : [c.num, c.title, c.time]));
             row._mode = mode;
           }
           const c = row._c;
-          const cls = `zb-row zb-song${t.uri === playing ? " is-playing" : ""}${i === box._active ? " is-active" : ""}`;
+          const cls = `zb-row zb-song${t.uri === playing ? " is-playing" : ""}${t.uri === playing && playback.paused === true ? " is-paused" : ""}${i === box._active ? " is-active" : ""}`;
           if (row.className !== cls) row.className = cls;
           setAttr(row, "id", `zb-songs-o${i}`);
           setAttr(row, "data-i", String(i));
@@ -3146,24 +3410,25 @@
             row.style.height = `${rh}px`;
           }
           const length = fmtTime(t.duration?.milliseconds);
-          setText(c.num, String(songSource.numbered ? t.trackNumber || i + 1 : i + 1));
+          paintGlyph(c.num, "song", t, songSource.context, mode === "title" ? "" : String(songSource.numbered ? t.trackNumber || i + 1 : i + 1));
           setText(c.title, t.name || "");
           // each name its own link, so a click opens it and the rest of the
           // cell still selects the row
           if (mode === "wide" || mode === "artist") fillLinks(c.a, t.artists);
           if (mode === "wide") {
             fillLinks(c.b, [{ uri: t.album?.uri, name: t.album?.name, artist: t.artists?.[0]?.uri }]);
-            setAttr(row, "aria-label", `${t.name || ""}, ${artistNames(t)}, ${t.album?.name || ""}, ${length}`);
           }
+          setAttr(row, "aria-label", `${t.name || ""}, ${artistNames(t)}, ${t.album?.name || ""}, ${length}${t.uri === playing ? playback.paused ? ", Paused" : ", Playing" : ""}`);
           setText(c.time, length);
         },
         onClick: (i) => setActive(box, i, false),
         onDblClick: (i) => play(songSource.context, box._items[i]?.uri),
         beforePaint() {
-          playing = S.Player.data?.item?.uri || "";
+          playing = playback.track;
           if (box._sourceKey) state.songPos[box._sourceKey] = { top: box._top, active: box._active };
         },
       });
+      for (const type of ["click", "dblclick"]) box.addEventListener(type, (e) => inlinePlayback(e, box, "song"), true);
       box.addEventListener(
         "scroll",
         () => {
@@ -3188,7 +3453,7 @@
         : null;
       songList.labels = labels;
       paintSongHeads();
-      return column(wide ? "zb-songs is-wide" : "zb-songs", headSlot, labels, box);
+      return column(wide ? "zb-songs is-wide" : "zb-songs", headSlot, labels, box, actionFooter(box, "song"));
     }
 
     function setSongSort(key, fromHeading) {
@@ -3219,6 +3484,10 @@
       if (!songList) return;
       const token = ++renderToken;
       const { box, headSlot } = songList;
+      const activeUri = box._items[box._active]?.uri;
+      if (document.activeElement === box._footer?.button && activeUri && !box._footer.restore) {
+        box._footer.restore = { uri: activeUri, context: songSource.context };
+      }
       let src;
       const liked = data.liked;
       const loadingNote = data.likedError ? " · couldn't load them all" : data.likedDone ? "" : " · loading…";
@@ -3266,11 +3535,13 @@
       headSlot.replaceChildren(head([[counted(src.items.length, src.total ?? src.items.length, "songs"), true], [src.sort || ""]], src.links || [], src.control || null));
       box._items = src.items;
       box._active = keep ? box._active : pos && pos.active < src.items.length ? pos.active : -1;
+      if (keep && activeUri && box._items[box._active]?.uri !== activeUri) box._active = box._items.findIndex((t) => t.uri === activeUri);
       state.active["zb-songs"] = box._active;
       box.querySelector(".zb-empty")?.remove();
       if (!src.items.length) box.append(empty(src.empty || "No songs."));
       if (!keep) box._virtual.scrollTo(pos ? pos.top : 0); // a new list starts at the top
       songList.paint();
+      syncActions();
     }
 
     /* selection --------------------------------------------------------- */
@@ -3362,6 +3633,7 @@
       if (!state.view) state.view = settings.browserView;
       // keep keyboard focus in the column that had it
       const focusedId = document.activeElement?.closest?.("#zune-browser .zb-scroll")?.id;
+      const focusedFooter = rememberActionFocus();
       const scrolls = {};
       for (const s of body.querySelectorAll(".zb-scroll")) scrolls[s.id] = s._top;
 
@@ -3390,9 +3662,11 @@
         }
       }
       if (focusedId) body.querySelector(`#${focusedId}`)?.focus({ preventScroll: true });
+      if (focusedFooter?.node.isConnected) focusedFooter.button.focus({ preventScroll: true });
       // the columns are new nodes, so their slide-in starts on its own
       body.classList.toggle("zune-enter", !!animate);
       refreshSongs();
+      syncActions();
     }
 
     // arrow keys in the view switcher
@@ -3439,6 +3713,8 @@
       root.classList.toggle("zune-browsing", on);
       syncCovered();
       if (on) {
+        refreshPlayback();
+        refreshPlayingColors();
         layout();
         const mv = document.getElementById("main-view");
         if (mv && window.ResizeObserver) {
@@ -3475,12 +3751,14 @@
         if (shown && state.view === "artists") render(false);
       } else if (key === "browserRowHeight") for (const s of body.querySelectorAll(".zb-scroll")) s._virtual?.refresh();
       if (all && shown) render(false);
+      if (all || ["playingHighlight", "appearance", "accent", "accentLineColor", "accent2", "accentLines", "highContrast"].includes(key)) refreshPlayingColors();
     }
 
     return {
       el,
       show,
       onSettings,
+      onColors: refreshPlayingColors,
       syncCovered: () => shown && syncCovered(),
       albumTracks,
       playlistTracks,
@@ -3498,7 +3776,10 @@
       _liked: () => data.liked,
       _artists: () => artistList().map((x) => x.name),
       _reloadLiked: () => loadLiked(true),
-      onSongChange: () => shown && songList?.paint(),
+      onSongChange: () => refreshPlayback(),
+      onPlayerUpdate: () => (shown || pendingPlayback) && refreshPlayback(),
+      playbackToggleLabel: (c) => c.collection && ["track", "local", "album"].includes(c.type) && (c.type === "album" ? c.uri === playback.context : c.uri === playback.track) ? playback.paused ? "Resume" : "Pause" : null,
+      togglePlayback: (c) => activatePlayback(c.type === "album" ? "album" : "song", { uri: c.uri, name: c.name }, c.ctx),
       get shown() {
         return shown;
       },
@@ -3939,7 +4220,7 @@
           h("div", { class: "zso-card-head" }, pr?.image_url ? h("img", { src: pr.image_url, alt: "" }) : null, h("div", {}, h("b", { text: pr?.name || me }), h("small", { text: data ? `${(data.plays || 0).toLocaleString()} recent plays` : "" }))),
           h("div", { class: "zso-strip" }, ...covers)
         ),
-        h("div", { class: "zso-sidelinks" }, linkOut("edit profile", () => History.push(`/user/${me}`)), linkOut("account", () => History.push("/preferences")), linkOut("following", () => History.push(`/user/${me}/following`)), linkOut("followers", () => History.push(`/user/${me}/followers`)))
+        h("div", { class: "zso-sidelinks" }, linkOut("view profile", () => History.push(`/user/${me}`)), linkOut("spotify settings", () => History.push("/preferences")), linkOut("following", () => History.push(`/user/${me}/following`)), linkOut("followers", () => History.push(`/user/${me}/followers`)))
       );
     }
 
@@ -4061,7 +4342,7 @@
       }
       if (friendsOnly && el.querySelector(".zso-friends")) {
         const fresh = friends();
-        el.querySelector(".zso-friends").replaceWith(fresh);
+        replaceKeepingFocus(el.querySelector(".zso-friends"), fresh);
         fresh.querySelectorAll(".zso-face").forEach((f, i) => enter(f, i));
         return;
       }
@@ -4160,6 +4441,8 @@
     let genres = [];
     let fresh = null; // new releases
     let chart = null; // top 50
+    let feedError = false;
+    let chartError = false;
     let loadedAt = 0;
     let loading = null;
     let page = 0;
@@ -4218,7 +4501,7 @@
     }
 
     function load(force = false) {
-      if (!force && fresh && chart && Date.now() - loadedAt < 10 * 60 * 1000) return Promise.resolve();
+      if (!force && !feedError && !chartError && fresh && chart && Date.now() - loadedAt < 10 * 60 * 1000) return Promise.resolve();
       if (loading) return loading;
       // known only once Spotify ran it; this is What's New's own query
       const feedQuery = S.GraphQL?.Definitions?.queryWhatsNewFeed || { name: "queryWhatsNewFeed", operation: "query", sha256Hash: "d889c8c936ab192af8ced595427f5ba2acdf63478fdc0a181c8d477f8322630e", value: null };
@@ -4227,7 +4510,9 @@
         S.Platform.PlaylistAPI.getContents(TOP50, { offset: 0, limit: 20 }),
       ])
         .then(([feed, top]) => {
-          if (feed.status === "fulfilled") {
+          feedError = feed.status !== "fulfilled" || !Array.isArray(feed.value?.data?.whatsNewFeedItems?.items);
+          chartError = top.status !== "fulfilled" || !Array.isArray(top.value?.items);
+          if (!feedError) {
             const seen = new Set();
             fresh = (feed.value?.data?.whatsNewFeedItems?.items || [])
               .map((x) => x?.content?.data)
@@ -4240,11 +4525,11 @@
                 artists: (d.artists?.items || []).map((a) => ({ uri: a.uri, name: a.profile?.name })),
                 img: d.coverArt?.sources?.find((x) => x.width === 300)?.url || d.coverArt?.sources?.[0]?.url,
               }));
-          } else if (!fresh) fresh = [];
-          if (top.status === "fulfilled") {
+          }
+          if (!chartError) {
             chart = (top.value?.items || []).filter((t) => t?.uri).map((t) => ({ uri: t.uri, name: t.name, artist: (t.artists || []).map((a) => a.name).join(", "), artistUri: t.artists?.[0]?.uri || "", artists: (t.artists || []).map((a) => ({ uri: a.uri, name: a.name })), album: t.album?.uri }));
-          } else if (!chart) chart = [];
-          loadedAt = Date.now();
+          }
+          loadedAt = !feedError && !chartError ? Date.now() : 0;
         })
         .finally(() => {
           loading = null;
@@ -4254,6 +4539,12 @@
 
     function linkOut(text, fn) {
       return h("button", { type: "button", class: "zbr-more", onclick: fn }, text, h("span", { "aria-hidden": "true", text: " ↗" }));
+    }
+
+    function loadError(text) {
+      return h("p", { class: "zbr-empty", role: "status" }, text, " ", h("button", {
+        type: "button", class: "zbr-more", text: "Try again", onclick: () => load(true).then(() => shown && render(false)),
+      }));
     }
 
     function recommend() {
@@ -4277,7 +4568,7 @@
       const nav = (d) => () => {
         page = (page + d + pages) % pages;
         const fresh2 = recommend();
-        el.querySelector(".zbr-rec").replaceWith(fresh2);
+        replaceKeepingFocus(el.querySelector(".zbr-rec"), fresh2);
         fresh2.querySelectorAll(".zbr-tile").forEach((t, i) => enter(t, i));
       };
       return h(
@@ -4289,6 +4580,7 @@
           h("h2", { text: "we recommend" }),
           list.length > per ? h("span", { class: "zbr-pager" }, h("button", { type: "button", "aria-label": "Previous", html: ICON.back, onclick: nav(-1) }), h("button", { type: "button", class: "is-next", "aria-label": "Next", html: ICON.back, onclick: nav(1) })) : null
         ),
+        feedError ? loadError(list.length ? "Couldn't refresh new releases. Showing the previous results." : "Couldn't load new releases.") : null,
         h(
           "div",
           { class: "zbr-tiles", role: "list", style: `--zbr-per: ${cols}` },
@@ -4303,7 +4595,7 @@
                   h("span", { class: "zbr-a" }, nameLinks(r.artists))
                 )
               )
-            : [h("p", { class: "zbr-empty", text: fresh ? "Follow some artists, and their new releases show up here." : "loading…" })])
+            : feedError ? [] : [h("p", { class: "zbr-empty", text: fresh ? "Follow some artists, and their new releases show up here." : "loading…" })])
         )
       );
     }
@@ -4327,6 +4619,7 @@
         "section",
         { class: "zbr-chart", "aria-label": "Top 50" },
         h("div", { class: "zbr-rowhead" }, h("h2", {}, linkOut("top 50", () => go(TOP50)))),
+        chartError ? loadError(chart?.length ? "Couldn't refresh the chart. Showing the previous results." : "Couldn't load the chart.") : null,
         h(
           "ol",
           {},
@@ -4353,7 +4646,7 @@
                   h("span", { class: "zbr-a" }, nameLinks(t.artists))
                 )
               )
-            : [h("li", { class: "zbr-empty", text: chart ? "The chart didn't load." : "loading…" })])
+            : chartError ? [] : [h("li", { class: "zbr-empty", text: chart ? "No tracks in this chart." : "loading…" })])
         )
       );
       const main = h("div", { class: "zbr-main" }, tiles, h("div", { class: "zbr-lower" }, recommend(), top));
@@ -4376,7 +4669,7 @@
     // it underneath, and the page scrolls instead).
     function fit() {
       const rec = el.querySelector(".zbr-rec");
-      if (rec) rec.replaceWith(recommend());
+      if (rec) replaceKeepingFocus(rec, recommend());
       const main = el.querySelector(".zbr-main");
       const lower = el.querySelector(".zbr-lower");
       const items = [...el.querySelectorAll(".zbr-chart li")];
@@ -4822,6 +5115,7 @@
     const TRACKS = ["track", "local", "album", "playlist", "episode"];
     const ACTIONS = [
       { key: "menuPlay", label: () => "Play", types: [...TRACKS, "artist", "show", "collection"], run: play },
+      { key: "menuPlay", id: "menuPlaybackToggle", label: (c) => browser.playbackToggleLabel(c), types: ["track", "local", "album"], when: (c) => !!browser.playbackToggleLabel(c), run: (c) => browser.togglePlayback(c) },
       { key: "menuPlayNext", label: () => "Play next", types: TRACKS, run: (c) => queue(c, true) },
       { key: "menuQueue", label: () => "Add to now playing", types: TRACKS, run: (c) => queue(c, false) },
       { key: "menuPlaylist", label: () => "Add to playlist", types: ["track", "album", "playlist"], sub: true },
@@ -4870,7 +5164,7 @@
             role: "menuitem",
             tabindex: "-1",
             class: a.sub ? "has-sub" : "",
-            "data-key": a.key,
+            "data-key": a.id || a.key,
             "aria-haspopup": a.sub ? "menu" : null,
             "aria-expanded": a.sub ? String(!!subFor) : null,
             text: a.label(ctx),
@@ -4893,10 +5187,10 @@
     // saved / pinned state arrives after the menu opens: relabel in place, and
     // rebuild only if the items change, keeping focus where it was
     function relabel() {
-      const keys = visible().map((a) => a.key);
+      const keys = visible().map((a) => a.id || a.key);
       const now = items(el);
       if (keys.join() === now.map((b) => b.dataset.key).join()) {
-        for (const b of now) b.textContent = ACTIONS.find((a) => a.key === b.dataset.key).label(ctx);
+        for (const b of now) b.textContent = ACTIONS.find((a) => (a.id || a.key) === b.dataset.key).label(ctx);
         return;
       }
       const focused = el.contains(document.activeElement) ? document.activeElement.dataset.key : null;
@@ -4964,7 +5258,7 @@
       const type = typeOf(uri);
       if (!uri || !type) return false;
       close();
-      ctx = { uri, type, name: node.dataset.name || "", album: node.dataset.album || "", artist: node.dataset.artist || "", ctx: node.dataset.ctx || "", saved: false, pinned: false };
+      ctx = { uri, type, name: node.dataset.name || "", album: node.dataset.album || "", artist: node.dataset.artist || "", ctx: node.dataset.ctx || "", collection: !!node.closest("#zune-browser"), saved: false, pinned: false };
       if (!build()) {
         ctx = null;
         return false;
@@ -5114,7 +5408,7 @@
       true
     );
 
-    return { open, close, go };
+    return { open, close, go, onPlaybackChange: () => ctx && relabel() };
   })();
 
   /* ------------------------------------------------------------------ */
@@ -5631,6 +5925,7 @@
   S.Player.addEventListener("onplaypause", () => {
     updatePlaying();
     mix.onPlayPause();
+    browser.onPlayerUpdate();
   });
   S.Player.addEventListener("onprogress", () => {
     if (mix.isOpen) mix.onProgress();
@@ -5640,6 +5935,7 @@
     if (document.hidden) return; // nothing to see; onRoute still mounts on navigation
     mount();
     renderVolume();
+    browser.onPlayerUpdate();
   }, 1000);
   setInterval(() => !document.hidden && updateCount(true), 120000);
 
@@ -5676,6 +5972,7 @@
   setTimeout(() => mix.preload(), 4000);
 
   window.ZuneTheme = {
+    version: "0.0.2",
     openSettings: (cat) => settingsPage.open(cat),
     closeSettings: () => settingsPage.close(),
     openNowPlaying: () => mix.open(),
