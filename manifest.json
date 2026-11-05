@@ -1,0 +1,24 @@
+{
+  "name": "Zoone",
+  "description": "After the Zune 4 desktop software: lowercase pivots, Quickplay, Social, a three-column collection view, a flipping album-art mix view, blur-up motion, light and dark, and a settings page.",
+  "preview": "preview.png",
+  "readme": "README.md",
+  "usercss": "user.css",
+  "schemes": "color.ini",
+  "include": [
+    "https://dxtzip444.github.io/Zoone/theme.js"
+  ],
+  "authors": [
+    {
+      "name": "Dxtzip",
+      "url": "https://github.com/Dxtzip444"
+    }
+  ],
+  "tags": [
+    "light",
+    "dark",
+    "retro",
+    "metro",
+    "zune"
+  ]
+}
