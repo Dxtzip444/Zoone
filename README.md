@@ -1,5 +1,7 @@
 # Zoone
 
+Current release: **[v0.0.2](https://github.com/Dxtzip444/Zoone/releases/tag/v0.0.2)**.
+
 A Spotify theme for [Spicetify](https://spicetify.app) after the Zune 4 desktop software (2009–2011): lowercase pivot navigation, a magenta-to-orange accent, flat square album art, outlined round transport buttons, Zune's Quickplay and Social pages, a three-column collection view, a full-window mix view with a flipping album-art wall, and blur-up motion. Light and dark, switchable from its own settings page.
 
 ![Zoone: Quickplay](preview.png)
@@ -10,7 +12,7 @@ Tested on Spotify 1.3.6 (macOS) with Spicetify 2.46.
 
 ## Install
 
-**Spicetify Marketplace:** open Marketplace, go to **themes**, find **Zoone**, and click **Install**. Pick the light or dark scheme on the card. Zoone's JavaScript (pivots, Quickplay, Social, the collection view, the mix view and the settings page) is loaded with it.
+Download `Zoone-v0.0.2.zip` from the [release page](https://github.com/Dxtzip444/Zoone/releases/tag/v0.0.2) and extract it. A listing in the Spicetify Marketplace catalogue is not included in this release.
 
 **By hand:** copy this folder to your Spicetify `Themes` folder as `Zoone` (`~/.config/spicetify/Themes/Zoone` on macOS and Linux, `%appdata%\spicetify\Themes\Zoone` on Windows), then run:
 
@@ -66,7 +68,7 @@ Pick one in **Settings > colors > Theme**: light, dark, or match system (follows
 
 Click **SETTINGS** in the top bar, or **Zoone settings** in the profile menu. The settings page covers the content area and leaves the header, sidebar, and player bar visible, so changes show up as you make them. Its **spotify** tab opens Spotify's own settings. **HELP** opens a short list of tips; Esc closes it.
 
-There are 107 settings in 11 categories; one of them appears only when Better Mix is installed. Changes apply at once, without a reload or `spicetify apply`. Pivot labels and the custom font update as you type. The background picture applies when you press Enter or leave the field, and the row reports whether the picture loaded.
+There are 108 settings in 11 categories; one of them appears only when Better Mix is installed. Changes apply at once, without a reload or `spicetify apply`. Pivot labels and the custom font update as you type. The background picture applies when you press Enter or leave the field, and the row reports whether the picture loaded.
 
 | Category | What you can change |
 | -------- | ------------------- |
@@ -74,7 +76,7 @@ There are 107 settings in 11 categories; one of them appears only when Better Mi
 | background | Background picture and its wash, corner glow, halftone dots and their strength, corner stripe and its width, square corners, flat page headers (also hides genre and artist banners) |
 | type | Font (Segoe UI or bundled Selawik, Selawik, Spotify's, or any installed font), lowercase section titles, section title size, pivot weight |
 | layout | Full-window Quickplay, Social and Browse pages (on by default), compact or large page headers, track row height, search box width, scrollbars always visible or auto-hide, horizontal scrollbars |
-| collection | The Zune collection view on or off, everyone in your collection or only artists you follow in ARTISTS, the view it opens on, full width or main view only, row height, album size |
+| collection | The Zune collection view on or off, everyone in your collection or only artists you follow in ARTISTS, the view it opens on, full width or main view only, row height, album size, playing highlight (Zune mark or soft gradient) |
 | pivots | Pivot size, sub-pivots, big sub-pivots in marketplace, what collection opens, Zune's social me page or Spotify's profile, Zune's browse page or Spotify's, SETTINGS / HELP links, user name, custom app icons, and the four pivot labels |
 | menus | Right-click menus on or off, and each item they offer: play, play next, add to now playing, add to playlist, go to album, go to artist, add to collection (follow, for an artist), pin to quickplay, start smart DJ, copy link |
 | player | Zune icons, heart removes a like, volume control (readout, Spotify's slider, or both), scroll-to-change and step, now playing button, album art opens now playing (on by default), quality badge, bar height, and each left-tray button |
@@ -92,6 +94,16 @@ The **backup** category exports your changed settings as JSON and imports them o
 
 Settings are stored in Spotify's local storage under `zune:settings`. Only values that differ from the defaults are saved, so new defaults reach you when the theme updates.
 
+### Collection playback in v0.0.2
+
+Song rows and album covers reveal outlined playback controls on hover or selection. A current song pauses or resumes without replacing its queue. An album pauses or resumes only when it is the actual playback context. Clicking a row still selects it; Enter or double-clicking the row still plays from that list.
+
+Keyboard users can Tab from a list to its Play, Pause or Resume button directly below it. The row menu also offers Pause or Resume for the current item. Focus and selection remain separate from playback.
+
+Playing highlight defaults to a static soft wash using Accent lines and Gradient end. Zune mark keeps the small bars without the wash. High contrast suppresses the wash, and unsafe custom colors fall back to readable text and a neutral treatment. No new playback animation is added.
+
+Show playing song scrolls within the current list. If a filter hides it, the theme offers to clear that filter. A song outside the selected album, artist or playlist has an explicit link to its Spotify page instead of silently changing your selection.
+
 ## Building
 
 `user.css` is generated. Edit `src/zoone.css`, `color.ini` or `theme.js`, then run (Node.js 18 or newer):
@@ -103,6 +115,8 @@ spicetify refresh
 ```
 
 The stylesheet hooks onto ids, `data-testid` and `data-encore-id` attributes and Spotify's readable `main-*` class names, not its hashed class names, which change with every client build. `theme.js` only adds its own elements next to Spotify's; it never moves or rewrites nodes React owns. Internal names (`zune-*` classes, the `zune:settings` store, `window.ZuneTheme`) keep the old prefix so existing settings carry over.
+
+Run the focused regression checks with `node --test tests/playback.test.mjs`, and check script syntax with `node --check theme.js`. Runtime UI and screen-reader checks remain separate from these tests.
 
 ## Remove
 
