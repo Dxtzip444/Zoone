@@ -12,6 +12,12 @@
   "use strict";
 
   const S = window.Spicetify;
+  // Recent clients expose the native player through the registry before
+  // Spicetify finishes loading its webpack helpers. Let its player bridge
+  // attach then, instead of leaving the entire theme waiting indefinitely.
+  if (S?.Player && !("origin" in S.Player) && S?.Platform?.PlayerAPI?._state) {
+    S.Player.origin = S.Platform.PlayerAPI;
+  }
   let playerReady = false;
   try {
     playerReady = typeof S?.Player?.isPlaying?.() === "boolean";
@@ -351,7 +357,7 @@
 
     // player
     toggle("zuneIcons", "player", true, "Zune icons", { cls: "zune-icons", help: "Thin Zune-style glyphs for previous, next, repeat, shuffle, the hearts (Spotify's saved checks), download as Zune's sync, search, and the device, playlist and lyrics buttons." }),
-    choice("volumeControl", "player", "zune", [["zune", "volume readout"], ["spotify", "spotify slider"], ["both", "both"]], "Volume control", { choiceClass: { zune: "zune-vol-zune", spotify: "zune-vol-spotify", both: "zune-vol-both" } }),
+    choice("volumeControl", "player", "both", [["zune", "volume readout"], ["spotify", "spotify slider"], ["both", "both"]], "Volume control", { choiceClass: { zune: "zune-vol-zune", spotify: "zune-vol-spotify", both: "zune-vol-both" }, help: "The volume number sits below the slider in the left tray." }),
     toggle("wheelVolume", "player", true, "Scroll to change volume", { help: "Scroll over VOLUME to change it." }),
     range("volumeStep", "player", 2, 1, 10, 1, "Volume step", { unit: "%" }),
     toggle("showNowPlayingButton", "player", true, "Now playing button", { cls: "zune-no-npbtn", inverse: true, help: "The pink bars that open the mix view." }),
@@ -661,7 +667,10 @@
     if (key === "font" || key === "customFont") applyFont();
     if (PIVOT_KEYS.has(key)) renderPivots(currentPath(), true);
     if (QUICKPLAY_KEYS.has(key)) updateQuickplay(currentPath());
-    if (key === "volumeControl") renderVolume(true);
+    if (key === "volumeControl") {
+      setVolPop(false);
+      renderVolume(true);
+    }
     mix.onSettings(key);
     browser.onSettings(key);
     quickplay.onSettings(key);
@@ -934,11 +943,15 @@
   /* ------------------------------------------------------------------ */
   /* player bar: VOLUME readout, fillers and the now playing button      */
   /* ------------------------------------------------------------------ */
-  const volLabel = h("button", { type: "button", "aria-haspopup": "dialog", "aria-expanded": "false", title: "Scroll to change, click for a slider" });
+  const volLabel = h("button", { type: "button", "aria-haspopup": "dialog", "aria-controls": "zune-volume-pop", "aria-expanded": "false", title: "Scroll to change, click for a slider" });
   const volRange = h("input", { type: "range", class: "zune-range", min: "0", max: "100", step: "1", "aria-label": "Volume" });
   const muteBtn = h("button", { type: "button", text: "mute" });
-  const volPop = h("div", { class: "zune-volume-pop", role: "dialog", "aria-label": "Volume" }, volRange, muteBtn);
-  const volEl = h("div", { id: "zune-volume" }, volPop, volLabel);
+  const volPop = h("div", { id: "zune-volume-pop", class: "zune-volume-pop", role: "dialog", "aria-label": "Volume" }, volRange, muteBtn);
+  const volEl = h("div", { id: "zune-volume" }, volLabel);
+  // Spotify isolates #main's stacking context. Keep our popup beside the
+  // custom pages in body so they cannot cover the volume slider.
+  document.body.append(volPop);
+  const inVolume = (node) => !!node && (volEl.contains(node) || volPop.contains(node));
   const fillA = h("div", { id: "zune-fill-a", "aria-hidden": "true" });
   const fillB = h("div", { id: "zune-fill-b", "aria-hidden": "true" });
 
@@ -1017,33 +1030,47 @@
     { passive: false }
   );
 
+  function positionVolPop() {
+    if (!volEl.classList.contains("is-open")) return;
+    const anchor = volEl.getBoundingClientRect();
+    const width = volPop.getBoundingClientRect().width;
+    volPop.style.left = `${clamp(anchor.left + anchor.width / 2 - width / 2, 8, Math.max(8, window.innerWidth - width - 8))}px`;
+    volPop.style.bottom = `${window.innerHeight - anchor.top + 42}px`;
+  }
   function setVolPop(open) {
     volEl.classList.toggle("is-open", open);
+    volPop.classList.toggle("is-open", open);
     volLabel.setAttribute("aria-expanded", String(open));
     if (open) {
       renderVolume(true);
+      positionVolPop();
       requestAnimationFrame(() => volRange.focus({ preventScroll: true }));
     }
   }
   volLabel.addEventListener("click", () => setVolPop(!volEl.classList.contains("is-open")));
   volRange.addEventListener("blur", () => renderVolume(true));
-  volEl.addEventListener("focusout", (e) => {
-    if (volEl.classList.contains("is-open") && !volEl.contains(e.relatedTarget)) setVolPop(false);
+  for (const node of [volEl, volPop]) node.addEventListener("focusout", (e) => {
+    if (volEl.classList.contains("is-open") && !inVolume(e.relatedTarget)) setVolPop(false);
   });
+  window.addEventListener("resize", positionVolPop);
   volRange.addEventListener("input", () => {
     volRange.style.setProperty("--zune-fill", `${volRange.value}%`);
     setVol(Number(volRange.value) / 100);
   });
   muteBtn.addEventListener("click", () => {
     try {
-      S.Player.toggleMute?.();
+      // Older Spicetify wrappers look for a mute-button class Spotify no
+      // longer renders. The native control preserves Spotify's unmute level.
+      const nativeMute = $('aside[data-testid="now-playing-bar"] [data-testid="volume-bar-toggle-mute-button"]');
+      if (nativeMute && !nativeMute.disabled) nativeMute.click();
+      else S.Player.toggleMute?.();
     } catch (_) {
       /* ignore */
     }
     setTimeout(() => renderVolume(true), 80);
   });
   document.addEventListener("pointerdown", (e) => {
-    if (volEl.classList.contains("is-open") && !volEl.contains(e.target)) setVolPop(false);
+    if (volEl.classList.contains("is-open") && !inVolume(e.target)) setVolPop(false);
   });
 
   const npButton = h(
@@ -1098,8 +1125,8 @@
       // ignore sub-pixel jitter from trackpads and mice resting on a desk
       const p = [e.screenX, e.screenY];
       const moved = !lastPointer || Math.abs(p[0] - lastPointer[0]) + Math.abs(p[1] - lastPointer[1]) > 6;
-      lastPointer = p;
       if (!moved) return false;
+      lastPointer = p;
     }
     lastInput = Date.now();
     const close = idleOpened && settings.idleCloseOnActivity && mix.isOpen;
@@ -1156,6 +1183,7 @@
     all.forEach((n) => coveredNow.add(n));
   }
   function pushOverlay(o) {
+    setVolPop(false);
     if (!overlays.includes(o)) overlays.push(o);
     syncInert();
   }
@@ -5700,15 +5728,22 @@
     tag(lyrics, "lyrics");
     setClass("zune-lyrics-open", !!lyrics);
   }
-  // Spotify swaps grid cells and bar children when panels open or close.
-  // Watching those three nodes' direct children (no subtree) re-tags at once
-  // from any trigger, not only the clicks below; it costs nothing while idle.
+  // Spotify replaces both the player shell and nested tray controls. Repair
+  // the injected controls on the next frame, including a lost volume readout.
+  // Ignore text updates so the playback clock doesn't cause extra mounts.
   const watched = new Map(); // node -> MutationObserver
-  const watchChildren = (node) => {
+  let mountFrame = 0;
+  const watchChildren = (node, subtree = false) => {
     if (!node || !window.MutationObserver || watched.has(node)) return;
     for (const [old, mo] of watched) if (!old.isConnected) { mo.disconnect(); watched.delete(old); }
-    const mo = new MutationObserver(() => tagDom());
-    mo.observe(node, { childList: true });
+    const mo = new MutationObserver((records) => {
+      if (mountFrame || !records.some((r) => [...r.addedNodes, ...r.removedNodes].some((n) => n.nodeType === 1))) return;
+      mountFrame = requestAnimationFrame(() => {
+        mountFrame = 0;
+        mount();
+      });
+    });
+    mo.observe(node, { childList: true, subtree });
     watched.set(node, mo);
   };
   // re-tag soon after things that swap Spotify's containers
@@ -5738,11 +5773,22 @@
       if (userEl.parentElement !== nav) nav.append(userEl);
     }
     const bar = $('aside[data-testid="now-playing-bar"] > div');
-    if (bar) for (const n of [fillA, volEl, fillB, npButton]) if (n.parentElement !== bar) bar.append(n);
+    if (bar) {
+      for (const n of [fillA, fillB, npButton]) if (n.parentElement !== bar) bar.append(n);
+      // Keep Spotify's slider and mute button where React owns them. Only
+      // our readout is inserted beneath the slider, with a left-tray fallback.
+      const volumeHost = bar.querySelector('[data-testid="volume-bar"]') || bar;
+      if (volEl.parentElement !== volumeHost) {
+        setVolPop(false);
+        volumeHost.append(volEl);
+      }
+    }
     tagDom();
     watchChildren(nav?.parentElement);
     watchChildren(nav);
-    watchChildren(bar);
+    watchChildren(bar?.parentElement?.parentElement);
+    watchChildren(bar?.parentElement);
+    watchChildren(bar, true);
     browser.syncCovered();
     const lib = document.getElementById("Desktop_LeftSidebar_Id");
     if (libObserver && lib && lib !== libObserved) {
@@ -5942,8 +5988,16 @@
   for (const type of ["pointermove", "pointerdown", "wheel", "touchstart"]) {
     window.addEventListener(type, noteActivity, { capture: true, passive: true });
   }
+  document.addEventListener("visibilitychange", () => {
+    setVolPop(false);
+    if (!document.hidden) {
+      lastInput = Date.now();
+      mount();
+      renderVolume(true);
+    }
+  });
   setInterval(() => {
-    if (!settings.idleNowPlaying || mix.isOpen || overlays.length) return;
+    if (document.hidden || !settings.idleNowPlaying || mix.isOpen || overlays.length) return;
     if (!S.Player.data?.item) return;
     if (settings.idleOnlyPlaying && !S.Player.isPlaying?.()) return;
     if (Date.now() - lastInput < settings.idleMinutes * 60000) return;
@@ -5972,7 +6026,7 @@
   setTimeout(() => mix.preload(), 4000);
 
   window.ZuneTheme = {
-    version: "0.0.2",
+    version: "0.0.5",
     openSettings: (cat) => settingsPage.open(cat),
     closeSettings: () => settingsPage.close(),
     openNowPlaying: () => mix.open(),

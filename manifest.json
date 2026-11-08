@@ -1,13 +1,13 @@
 {
   "name": "Zoone",
-  "version": "0.0.2",
+  "version": "0.0.5",
   "description": "After the Zune 4 desktop software: lowercase pivots, Quickplay, Social, a three-column collection view, a flipping album-art mix view, blur-up motion, light and dark, and a settings page.",
   "preview": "preview.png",
   "readme": "README.md",
   "usercss": "user.css",
   "schemes": "color.ini",
   "include": [
-    "https://raw.githubusercontent.com/Dxtzip444/Zoone/v0.0.2/theme.js"
+    "https://raw.githubusercontent.com/Dxtzip444/Zoone/v0.0.5/theme.js"
   ],
   "authors": [
     {
