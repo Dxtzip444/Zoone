@@ -1161,7 +1161,7 @@ aside[data-testid="now-playing-bar"] > div {
   grid-template-rows: 1fr 18px;
   grid-template-areas:
     "extras np space repeat shuffle prev play next npbtn"
-    "extras np space filla  filla   vol  vol  vol  fillb";
+    "extras np space filla  filla   filla filla filla fillb";
   grid-auto-flow: column;
   grid-auto-columns: max-content;
   align-items: center;
@@ -1257,12 +1257,40 @@ html.zune-hide-x-fullscreen aside [data-testid="fullscreen-mode-button"] {
   display: none !important;
 }
 
-/* Volume: the Zune readout, Spotify's slider, or both (settings > player) */
-html.zune-js.zune-vol-zune aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] {
+/* Keep the number directly beneath Spotify's slider in the left tray.
+   Reserve its space explicitly so the volume modes survive resizing. */
+aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] {
+  display: grid !important;
+  grid-template-columns: 34px 96px;
+  grid-template-rows: 34px auto;
+  align-items: center;
+  width: 130px !important;
+  min-width: 130px !important;
+  max-width: none !important;
+  overflow: visible !important;
+  --slider-width: 96px !important;
+}
+aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] > button {
+  grid-area: 1 / 1;
+}
+aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] > div:not(#zune-volume) {
+  grid-area: 1 / 2;
+  width: 96px !important;
+  min-width: 0 !important;
+}
+aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] > #zune-volume {
+  grid-area: 2 / 2;
+}
+/* Only hide native controls while their replacement is actually mounted.
+   This :has() is local to the volume group, away from the playback clock. */
+html.zune-js.zune-vol-zune aside[data-testid="now-playing-bar"] [data-testid="volume-bar"]:has(> #zune-volume) {
+  grid-template-rows: 0 auto;
+}
+html.zune-js.zune-vol-zune aside[data-testid="now-playing-bar"] [data-testid="volume-bar"]:has(> #zune-volume) > :not(#zune-volume) {
   display: none !important;
 }
-html.zune-vol-spotify #zune-volume {
-  visibility: hidden;
+html.zune-vol-spotify [data-testid="volume-bar"] > #zune-volume {
+  display: none;
 }
 
 /* Now playing: art + title, progress line underneath */
@@ -1482,14 +1510,22 @@ aside[data-testid="now-playing-bar"] [data-testid="control-button-playpause"]:ac
 
 /* Injected: VOLUME readout and the now playing button */
 #zune-volume {
-  grid-area: vol;
   justify-self: center;
   align-self: start;
   position: relative;
   -webkit-app-region: no-drag;
 }
-#zune-volume > button {
+/* A temporary fallback if Spotify replaces the native volume group. */
+aside[data-testid="now-playing-bar"] > div > #zune-volume {
+  grid-area: extras;
+  align-self: end;
+  justify-self: start;
+}
+aside[data-testid="now-playing-bar"] #zune-volume > button {
   all: unset;
+  width: auto !important;
+  min-width: 0 !important;
+  height: auto !important;
   cursor: pointer;
   font-size: 9.5px;
   font-weight: 700;
@@ -1505,11 +1541,8 @@ aside[data-testid="now-playing-bar"] [data-testid="control-button-playpause"]:ac
 #zune-volume.is-muted > button {
   color: var(--spice-subtext);
 }
-#zune-volume .zune-volume-pop {
-  position: absolute;
-  bottom: calc(100% + 54px);
-  left: 50%;
-  transform: translateX(-50%);
+#zune-volume-pop {
+  position: fixed;
   display: none;
   align-items: center;
   gap: 10px;
@@ -1520,11 +1553,14 @@ aside[data-testid="now-playing-bar"] [data-testid="control-button-playpause"]:ac
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   z-index: 50;
 }
-#zune-volume.is-open .zune-volume-pop {
+#zune-volume-pop.is-open {
   display: flex;
 }
-#zune-volume .zune-volume-pop button {
+#zune-volume-pop button {
   all: unset;
+  width: auto !important;
+  min-width: 0 !important;
+  height: auto !important;
   cursor: pointer;
   font-size: 9.5px;
   font-weight: 700;
@@ -1532,7 +1568,7 @@ aside[data-testid="now-playing-bar"] [data-testid="control-button-playpause"]:ac
   text-transform: uppercase;
   color: var(--spice-subtext);
 }
-#zune-volume .zune-volume-pop button:hover {
+#zune-volume-pop button:hover {
   color: var(--spice-text);
 }
 
@@ -1754,6 +1790,7 @@ html.zune-no-hscroll .os-theme-spotify.os-scrollbar-horizontal {
 #zune-links button:focus-visible,
 #zune-user:focus-visible,
 #zune-volume button:focus-visible,
+#zune-volume-pop button:focus-visible,
 #zune-np-button:focus-visible,
 #zune-mixview button:focus-visible,
 #zune-mixview img:focus-visible,
@@ -1770,8 +1807,7 @@ html.zune-no-hscroll .os-theme-spotify.os-scrollbar-horizontal {
    html.zune-motion-off     nothing moves (theme.js also stops the timers)
    Spotify's own animations are left alone.
    -------------------------------------------------------------------------- */
-/* The one entrance. It ends on the element's own values, so anything with
-   its own transform (the volume popover) lands where it belongs. */
+/* The one entrance ends on each element's own values. */
 @keyframes zune-slide-in {
   from {
     opacity: 0;
@@ -1798,8 +1834,8 @@ html.zune-curve-linear { --zune-enter-ease: linear; }
   to { opacity: 1; }
 }
 @keyframes zune-pop {
-  from { opacity: 0; transform: translate(-50%, 6px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 /* The equaliser bars share one clock and differ only in shape. Separate
    durations or delays make Blink wake the main thread for every bar's own
@@ -1844,10 +1880,10 @@ html.zune-motion-reduced #zune-pivot .zune-pivot-sub.zune-enter button {
   animation: zune-slide-in var(--zune-slide-duration) var(--zune-enter-ease) backwards;
 }
 
-html.zune-motion-full #zune-volume.is-open .zune-volume-pop {
+html.zune-motion-full #zune-volume-pop.is-open {
   animation: zune-pop 0.18s var(--zune-ease) backwards;
 }
-html.zune-motion-reduced #zune-volume.is-open .zune-volume-pop {
+html.zune-motion-reduced #zune-volume-pop.is-open {
   animation: zune-fade-in 0.18s ease backwards;
 }
 html.zune-motion-full.zune-playing #zune-np-button i {
@@ -2937,11 +2973,6 @@ html.zune-lib-collapsed #Desktop_LeftSidebar_Id {
   border-radius: var(--zune-radius) !important;
 }
 
-/* Spotify's slider, when settings > player shows it */
-aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] {
-  --slider-width: 96px !important;
-}
-
 /* Settings: native scrollbars like the rest, visible picker focus, errors */
 #zune-settings ::-webkit-scrollbar {
   width: 11px;
@@ -2978,7 +3009,7 @@ aside[data-testid="now-playing-bar"] [data-testid="volume-bar"] {
 }
 
 /* Motion off: no theme transitions either */
-html.zune-motion-off :is(#zune-pivot, #zune-settings, #zune-mixview, #zune-help, #zune-links, #zune-user, #zune-volume) *,
+html.zune-motion-off :is(#zune-pivot, #zune-settings, #zune-mixview, #zune-help, #zune-links, #zune-user, #zune-volume, #zune-volume-pop) *,
 html.zune-motion-off #zune-np-button i {
   transition: none !important;
 }

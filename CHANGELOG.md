@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.0.5
+
+- Keep the volume number beneath the native slider in the left tray and show both by default.
+- Place the volume popup above the custom pages so its slider and mute button remain clickable.
+- Recover injected player controls after nested Spotify redraws, retaining a native volume fallback while the readout is missing.
+- Keep volume controls visible at smaller window sizes, close the popup when another overlay opens, and retain Escape and focus behavior.
+- Prevent the idle mix view from opening in the background; restart its inactivity timer when returning to Spotify and recognize gradual pointer movement.
+- Allow startup when Spotify's native player is ready before Spicetify attaches its bridge; use the current native mute control instead of Spicetify's outdated class selector.
+
 ## v0.0.2
 
 - Add outlined play/pause controls to Collection songs and album covers, with equivalent keyboard actions below each list.

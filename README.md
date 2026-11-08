@@ -1,6 +1,6 @@
 # Zoone
 
-Current release: **[v0.0.2](https://github.com/Dxtzip444/Zoone/releases/tag/v0.0.2)**.
+Current release: **[v0.0.5](https://github.com/Dxtzip444/Zoone/releases/tag/v0.0.5)**.
 
 A Spotify theme for [Spicetify](https://spicetify.app) after the Zune 4 desktop software (2009–2011): lowercase pivot navigation, a magenta-to-orange accent, flat square album art, outlined round transport buttons, Zune's Quickplay and Social pages, a three-column collection view, a full-window mix view with a flipping album-art wall, and blur-up motion. Light and dark, switchable from its own settings page.
 
@@ -12,7 +12,7 @@ Tested on Spotify 1.3.6 (macOS) with Spicetify 2.46.
 
 ## Install
 
-Download `Zoone-v0.0.2.zip` from the [release page](https://github.com/Dxtzip444/Zoone/releases/tag/v0.0.2) and extract it. A listing in the Spicetify Marketplace catalogue is not included in this release.
+Download `Zoone-v0.0.5.zip` from the [release page](https://github.com/Dxtzip444/Zoone/releases/tag/v0.0.5) and extract it. A listing in the Spicetify Marketplace catalogue is not included in this release.
 
 **By hand:** copy this folder to your Spicetify `Themes` folder as `Zoone` (`~/.config/spicetify/Themes/Zoone` on macOS and Linux, `%appdata%\spicetify\Themes\Zoone` on Windows), then run:
 
@@ -57,7 +57,7 @@ Pick one in **Settings > colors > Theme**: light, dark, or match system (follows
 | Library filter chips | Spotify's library sidebar keeps its filters, shown as an uppercase switcher. |
 | Device, disc, and playlist glyphs at the bottom left | Spotify's devices, queue and lyrics buttons first and large, drawn as thin Zune-style icons (a phone for devices, a playlist sheet for the queue), then volume, then a small mini player and full screen. The player's previous and next are double triangles, repeat is a circular arrow, and the like button is a heart. Clicking a filled heart takes the song out of Liked Songs at once, as in Zune (Option-click, Alt-click on Windows, opens Spotify's playlist picker; Settings > player can turn this off). The icons are drawn for this theme in Zune's style; they are not Microsoft's files. The Zune icons for Spotify's own download, shuffle, create and expand buttons need Spotify's English interface; in other languages those buttons keep Spotify's icons. |
 | Track art, title, and a hairline progress bar | Spotify's now-playing widget and seek bar: elapsed time under the left end of the line, the length under the right end, and the heart above the right end. In the light theme a Canvas video plays inside its own box, so the now playing panel stays light. |
-| Repeat and shuffle (magenta when on), prev / **play** / next rings, `VOLUME 49` | Scroll over `VOLUME` to change the volume. Click it for a slider and a mute toggle. |
+| Repeat and shuffle (magenta when on), prev / **play** / next rings, `VOLUME 49` | The volume slider stays in the left tray, with the number directly beneath it. Both are shown by default. Scroll over `VOLUME` to change it, or click for a slider and a mute toggle. The popup stays above Zoone's pages. |
 | Pink equalizer bars, or the album art in the player bar | Open the mix view: a tinted, flipping mosaic of your albums and related artists, artist photos, the queue, and transport controls. In its up next list, double-click a song or press Enter to play from there; songs you queued have a remove button, and Delete removes them too. Press Esc or the back circle to leave. While it is open, the rest of the app is inert and keyboard focus stays inside it. It also opens by itself after 5 minutes without input, like Zune. |
 | Metro motion | Each piece of a new page (header art and title, the play row, track rows, cards, section titles) blurs up from nothing into its place as Spotify renders it, 0.4 s, fast into slow, the first few one after another. Theme screens (settings, collection columns, sub-pivots, the mix view and its album wall, Quickplay, Social, Browse) enter the same way, and the cover and title blur up when the song changes. Zune's sideways slide is still available. |
 | Names and right-click menus | On Zoone's pages (Quickplay, collection, social, browse and now playing), each artist and album name is a link to its page. Right-click a song, album, artist or playlist, or press Shift+F10 or the menu key, for a Zune-style menu: play, play next, add to now playing, add to playlist, go to album or artist, add to collection or follow, pin to quickplay, start smart DJ, copy link. It only offers what fits: pin appears for things in your library, follow becomes unfollow. Esc closes the playlist list first, then the menu. Spotify's own pages keep Spotify's menu. |
@@ -116,7 +116,7 @@ spicetify refresh
 
 The stylesheet hooks onto ids, `data-testid` and `data-encore-id` attributes and Spotify's readable `main-*` class names, not its hashed class names, which change with every client build. `theme.js` only adds its own elements next to Spotify's; it never moves or rewrites nodes React owns. Internal names (`zune-*` classes, the `zune:settings` store, `window.ZuneTheme`) keep the old prefix so existing settings carry over.
 
-Run the focused regression checks with `node --test tests/playback.test.mjs`, and check script syntax with `node --check theme.js`. Runtime UI and screen-reader checks remain separate from these tests.
+Run the focused regression checks with `node --test tests/*.test.mjs`, and check script syntax with `node --check theme.js`. Runtime UI and screen-reader checks remain separate from these tests. See [the usability review](REVIEW.md) for the verified fixes and remaining review scope.
 
 ## Remove
 
